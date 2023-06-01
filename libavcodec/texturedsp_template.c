@@ -49,7 +49,7 @@ int TEXTUREDSP_FUNC_NAME(AVCodecContext *avctx, void *arg,
         int off = y * w_block;
         for (x = 0; x < w_block; x++) {
             ctx->TEXTUREDSP_TEX_FUNC(p + x * ctx->raw_ratio, ctx->stride,
-                                     d + (off + x) * ctx->tex_ratio);
+                                     d + (off + x) * ctx->tex_ratio, ctx->user_data);
         }
     }
 

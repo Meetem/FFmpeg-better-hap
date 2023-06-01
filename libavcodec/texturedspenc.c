@@ -450,7 +450,7 @@ static int constant_color(const uint8_t *block, ptrdiff_t stride)
 }
 
 /* Main color compression function */
-static void compress_color(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static void compress_color(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
     uint32_t mask;
     uint16_t max16, min16;
@@ -496,7 +496,7 @@ static void compress_color(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
 }
 
 /* Alpha compression function */
-static void compress_alpha(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static void compress_alpha(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
     int x, y;
     int dist, bias, dist4, dist2;
@@ -576,7 +576,7 @@ static void compress_alpha(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
  * but this version of the algorithm does not introduce it as much as other
  * implementations, allowing for a simpler and faster conversion.
  */
-static void rgba2ycocg(uint8_t *dst, const uint8_t *pixel)
+static void rgba2ycocg(uint8_t *dst, const uint8_t *pixel, void *user_data)
 {
     int r =  pixel[0];
     int g = (pixel[1] + 1) >> 1;
@@ -598,9 +598,9 @@ static void rgba2ycocg(uint8_t *dst, const uint8_t *pixel)
  * @param block  block to compress.
  * @return how much texture data has been written.
  */
-static int dxt1_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static int dxt1_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
-    compress_color(dst, stride, block);
+    compress_color(dst, stride, block, user_data);
 
     return 8;
 }
@@ -614,10 +614,10 @@ static int dxt1_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
  * @param block  block to compress.
  * @return how much texture data has been written.
  */
-static int dxt5_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static int dxt5_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
-    compress_alpha(dst, stride, block);
-    compress_color(dst + 8, stride, block);
+    compress_alpha(dst, stride, block, user_data);
+    compress_color(dst + 8, stride, block, user_data);
 
     return 16;
 }
@@ -631,7 +631,7 @@ static int dxt5_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
  * @param block  block to compress.
  * @return how much texture data has been written.
  */
-static int dxt5ys_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static int dxt5ys_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
     int x, y;
     uint8_t reorder[64];
@@ -639,10 +639,10 @@ static int dxt5ys_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
     /* Reorder the components and then run a normal DXT5 compression. */
     for (y = 0; y < 4; y++)
         for (x = 0; x < 4; x++)
-            rgba2ycocg(reorder + x * 4 + y * 16, block + x * 4 + y * stride);
+            rgba2ycocg(reorder + x * 4 + y * 16, block + x * 4 + y * stride, user_data);
 
-    compress_alpha(dst + 0, 16, reorder);
-    compress_color(dst + 8, 16, reorder);
+    compress_alpha(dst + 0, 16, reorder, user_data);
+    compress_color(dst + 8, 16, reorder, user_data);
 
     return 16;
 }
@@ -656,11 +656,67 @@ static int dxt5ys_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
  * @param block  block to compress.
  * @return how much texture data has been written.
  */
-static int rgtc1u_alpha_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static int rgtc1u_alpha_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
-    compress_alpha(dst, stride, block);
+    compress_alpha(dst, stride, block, user_data);
 
     return 8;
+}
+
+#include "bc7enc/bcenc_compat.h"
+static void blockinize_pixels(const uint8_t *srcBlock, ptrdiff_t stride, uint32_t *dstBlock){
+    uint32_t *pixels = (uint32_t*)srcBlock;
+    dstBlock[0] = pixels[0];
+    dstBlock[1] = pixels[1];
+    dstBlock[2] = pixels[2];
+    dstBlock[3] = pixels[3];
+    srcBlock += stride;
+    pixels = (uint32_t*)srcBlock;
+    dstBlock[4] = pixels[0];
+    dstBlock[5] = pixels[1];
+    dstBlock[6] = pixels[2];
+    dstBlock[7] = pixels[3];
+    srcBlock += stride;
+    pixels = (uint32_t*)srcBlock;
+    dstBlock[8] = pixels[0];
+    dstBlock[9] = pixels[1];
+    dstBlock[10] = pixels[2];
+    dstBlock[11] = pixels[3];
+    srcBlock += stride;
+    pixels = (uint32_t*)srcBlock;
+    dstBlock[12] = pixels[0];
+    dstBlock[13] = pixels[1];
+    dstBlock[14] = pixels[2];
+    dstBlock[15] = pixels[3];
+}
+
+static int bc1_block_encode(uint8_t* dst, ptrdiff_t stride, const uint8_t* block, void *user_data)
+{
+    int quality = (int)user_data;
+
+    uint32_t colors[16];
+    blockinize_pixels(block, stride, colors);
+    bcenc_encode_dxt1(quality, (void*) dst, (uint8_t*) colors);
+    return 8;
+}
+static int bc3_block_encode(uint8_t* dst, ptrdiff_t stride, const uint8_t* block, void *user_data)
+{
+    int quality = (int)user_data;
+
+    uint32_t colors[16];
+    blockinize_pixels(block, stride, colors);
+    bcenc_encode_dxt5(quality, (void*) dst, (uint8_t*) colors);
+    return 16;
+}
+
+static int bc7_block_encode(uint8_t* dst, ptrdiff_t stride, const uint8_t* block, void* user_data)
+{
+    int settings_id = (int)user_data;
+
+    uint32_t colors[16];
+    blockinize_pixels(block, stride, colors);
+    bc7_encode(settings_id, (void*)dst, (uint8_t*)colors);
+    return 16;
 }
 
 av_cold void ff_texturedspenc_init(TextureDSPContext *c)
@@ -669,8 +725,9 @@ av_cold void ff_texturedspenc_init(TextureDSPContext *c)
     c->dxt5_block         = dxt5_block;
     c->dxt5ys_block       = dxt5ys_block;
     c->rgtc1u_alpha_block = rgtc1u_alpha_block;
+    c->bc7_block          = bc7_block_encode;
 }
 
 #define TEXTUREDSP_FUNC_NAME ff_texturedsp_compress_thread
-#define TEXTUREDSP_TEX_FUNC(a, b, c) tex_funct(c, b, a)
+#define TEXTUREDSP_TEX_FUNC(a, b, c, d) tex_funct(c, b, a, d)
 #include "texturedsp_template.c"

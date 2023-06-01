@@ -43,6 +43,7 @@
 #include "encode.h"
 #include "hap.h"
 #include "texturedsp.h"
+#include "bc7enc/bcenc_compat.h"
 
 #define HAP_MAX_CHUNKS 64
 
@@ -249,6 +250,15 @@ static av_cold int hap_init(AVCodecContext *avctx)
 
     ff_texturedspenc_init(&ctx->dxtc);
 
+    ctx->enc.user_data = (void*)ctx->opt_quality_level;
+    int is_bc7enc = ctx->opt_tex_fmt == HAP_FMT_BC7 || ctx->opt_tex_fmt == HAP_FMT_BC6H;
+
+    bcenc_init(0);
+
+    if(is_bc7enc){
+        ctx->enc.user_data = (void*)bc7_init(ctx->opt_bc7_perceptual, ctx->opt_bc7_max_partitions, ctx->opt_bc7_uber_level);
+    }
+
     switch (ctx->opt_tex_fmt) {
     case HAP_FMT_RGBDXT1:
         ctx->enc.tex_ratio = 8;
@@ -267,6 +277,16 @@ static av_cold int hap_init(AVCodecContext *avctx)
         avctx->codec_tag = MKTAG('H', 'a', 'p', 'Y');
         avctx->bits_per_coded_sample = 24;
         ctx->enc.tex_funct = ctx->dxtc.dxt5ys_block;
+        break;
+    case HAP_FMT_BC6H:
+        av_log(avctx, AV_LOG_FATAL, "HapF (BC6H) is not implemented\n");
+        av_assert0(0);
+        break;
+    case HAP_FMT_BC7:
+        ctx->enc.tex_ratio = 16;
+        avctx->codec_tag = MKTAG('H', 'a', 'p', '7');
+        avctx->bits_per_coded_sample = 32;
+        ctx->enc.tex_funct = ctx->dxtc.bc7_block;
         break;
     default:
         av_log(avctx, AV_LOG_ERROR, "Invalid format %02X\n", ctx->opt_tex_fmt);
@@ -328,11 +348,19 @@ static av_cold int hap_close(AVCodecContext *avctx)
 #define OFFSET(x) offsetof(HapContext, x)
 #define FLAGS     AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
 static const AVOption options[] = {
-    { "format", NULL, OFFSET(opt_tex_fmt), AV_OPT_TYPE_INT, { .i64 = HAP_FMT_RGBDXT1 }, HAP_FMT_RGBDXT1, HAP_FMT_YCOCGDXT5, FLAGS, "format" },
+    { "format", NULL, OFFSET(opt_tex_fmt), AV_OPT_TYPE_INT, { .i64 = HAP_FMT_RGBDXT1 }, HAP_FMT_BC6H, HAP_FMT_YCOCGDXT5, FLAGS, "format" },
         { "hap",       "Hap 1 (DXT1 textures)", 0, AV_OPT_TYPE_CONST, { .i64 = HAP_FMT_RGBDXT1   }, 0, 0, FLAGS, "format" },
         { "hap_alpha", "Hap Alpha (DXT5 textures)", 0, AV_OPT_TYPE_CONST, { .i64 = HAP_FMT_RGBADXT5  }, 0, 0, FLAGS, "format" },
         { "hap_q",     "Hap Q (DXT5-YCoCg textures)", 0, AV_OPT_TYPE_CONST, { .i64 = HAP_FMT_YCOCGDXT5 }, 0, 0, FLAGS, "format" },
     { "chunks", "chunk count", OFFSET(opt_chunk_count), AV_OPT_TYPE_INT, {.i64 = 1 }, 1, HAP_MAX_CHUNKS, FLAGS, },
+    { "compressor", "second-stage compressor", OFFSET(opt_compressor), AV_OPT_TYPE_INT, { .i64 = HAP_COMP_SNAPPY }, HAP_COMP_NONE, HAP_COMP_SNAPPY, FLAGS, "compressor" },
+    //{ "bc6h", "Hap with BC6H float16 (not supported by default decoders)", 0, AV_OPT_TYPE_CONST, { .i64 = HAP_FMT_BC6H  }, 0, 0, FLAGS, "format" },
+    { "bc7", "Hap with BC7 texture (not supported by default decoders)", 0, AV_OPT_TYPE_CONST, { .i64 = HAP_FMT_BC7  }, 0, 0, FLAGS, "format" },
+    { "chunks", "chunk count", OFFSET(opt_chunk_count), AV_OPT_TYPE_INT, {.i64 = 1 }, 1, HAP_MAX_CHUNKS, FLAGS, },
+    { "qlvl", "quality level (0 - 18) -1 default ffmpeg", OFFSET(opt_quality_level), AV_OPT_TYPE_INT, {.i64 = 10 }, -1, 18, FLAGS, },
+    { "bc7_perceptual", "0/1, perceptual gives more quality", OFFSET(opt_bc7_perceptual), AV_OPT_TYPE_INT, {.i64 = 1 }, 0, 1, FLAGS, },
+    { "bc7_max_partitions", "The higher this value, the slower the compressor, but the higher the quality.", OFFSET(opt_bc7_max_partitions), AV_OPT_TYPE_INT, {.i64 = 4 }, 0, 64, FLAGS, },
+    { "bc7_uber_level", "The higher this value, the slower the compressor, but the higher the quality.", OFFSET(opt_bc7_uber_level), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 4, FLAGS, },
     { "compressor", "second-stage compressor", OFFSET(opt_compressor), AV_OPT_TYPE_INT, { .i64 = HAP_COMP_SNAPPY }, HAP_COMP_NONE, HAP_COMP_SNAPPY, FLAGS, "compressor" },
         { "none",       "None", 0, AV_OPT_TYPE_CONST, { .i64 = HAP_COMP_NONE }, 0, 0, FLAGS, "compressor" },
         { "snappy",     "Snappy", 0, AV_OPT_TYPE_CONST, { .i64 = HAP_COMP_SNAPPY }, 0, 0, FLAGS, "compressor" },

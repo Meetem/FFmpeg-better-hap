@@ -122,7 +122,7 @@ static int txd_decode_frame(AVCodecContext *avctx, AVFrame *p,
             for (j = 0; j < avctx->height; j += 4) {
                 for (i = 0; i < avctx->width; i += 4) {
                     uint8_t *p = ptr + i * 4 + j * stride;
-                    int step = dxtc.dxt1_block(p, stride, gb.buffer);
+                    int step = dxtc.dxt1_block(p, stride, gb.buffer, NULL);
                     bytestream2_skip(&gb, step);
                 }
             }
@@ -131,7 +131,7 @@ static int txd_decode_frame(AVCodecContext *avctx, AVFrame *p,
             for (j = 0; j < avctx->height; j += 4) {
                 for (i = 0; i < avctx->width; i += 4) {
                     uint8_t *p = ptr + i * 4 + j * stride;
-                    int step = dxtc.dxt3_block(p, stride, gb.buffer);
+                    int step = dxtc.dxt3_block(p, stride, gb.buffer, NULL);
                     bytestream2_skip(&gb, step);
                 }
             }

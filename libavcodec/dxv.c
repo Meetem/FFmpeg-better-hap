@@ -57,7 +57,7 @@ typedef struct DXVContext {
     int ctexture_block_h;
 
     /* Pointer to the selected decompression function */
-    int (*tex_funct)(uint8_t *dst, ptrdiff_t stride, const uint8_t *block);
+    int (*tex_funct)(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data);
     int (*tex_funct_planar[2])(uint8_t *plane0, ptrdiff_t stride0,
                                uint8_t *plane1, ptrdiff_t stride1,
                                const uint8_t *block);
@@ -210,7 +210,7 @@ static int decompress_texture_thread(AVCodecContext *avctx, void *arg,
             int off = y * w_block;
             for (x = 0; x < w_block; x++) {
                 ctx->tex_funct(p + x * 4 * ctx->texture_block_w, frame->linesize[0],
-                               d + (off + x) * ctx->tex_step);
+                               d + (off + x) * ctx->tex_step, NULL);
             }
         }
     } else {

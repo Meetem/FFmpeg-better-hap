@@ -383,6 +383,16 @@ static av_cold int hap_init(AVCodecContext *avctx)
         ctx->dec[0].raw_ratio = 4;
         avctx->pix_fmt = AV_PIX_FMT_GRAY8;
         break;
+    case MKTAG('H','a','p','7'):
+        texture_name = "BC7";
+        ctx->dec[0].tex_ratio = 16;
+        ctx->dec[0].tex_funct = ctx->dxtc.bc7_block;
+        avctx->pix_fmt = AV_PIX_FMT_RGBA;
+        break;
+    case MKTAG('H','a','p','F'):
+        av_log(avctx, AV_LOG_FATAL, "HapF (BC6H) is not implemented\n");
+        av_assert0(0);
+        break;
     case MKTAG('H','a','p','M'):
         texture_name  = "DXT5-YCoCg-scaled / RGTC1";
         ctx->dec[0].tex_ratio = 16;
@@ -430,6 +440,8 @@ const FFCodec ff_hap_decoder = {
         MKTAG('H','a','p','Y'),
         MKTAG('H','a','p','A'),
         MKTAG('H','a','p','M'),
+        MKTAG('H','a','p','F'),
+        MKTAG('H','a','p','7'),
         FF_CODEC_TAGS_END,
     },
 };

@@ -112,7 +112,7 @@ static inline void dxt1_block_internal(uint8_t *dst, ptrdiff_t stride,
  * @param block  block to decompress.
  * @return how much texture data has been consumed.
  */
-static int dxt1_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static int dxt1_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
     dxt1_block_internal(dst, stride, block, 255);
 
@@ -129,7 +129,7 @@ static int dxt1_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
  * @param block  block to decompress.
  * @return how much texture data has been consumed.
  */
-static int dxt1a_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static int dxt1a_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
     dxt1_block_internal(dst, stride, block, 0);
 
@@ -189,7 +189,7 @@ static av_always_inline void premult2straight(uint8_t *src)
  * @param block  block to decompress.
  * @return how much texture data has been consumed.
  */
-static int dxt2_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static int dxt2_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
     int x, y;
 
@@ -213,7 +213,7 @@ static int dxt2_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
  * @param block  block to decompress.
  * @return how much texture data has been consumed.
  */
-static int dxt3_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static int dxt3_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
     dxt3_block_internal(dst, stride, block);
 
@@ -308,7 +308,7 @@ static inline void dxt5_block_internal(uint8_t *dst, ptrdiff_t stride,
  * @param block  block to decompress.
  * @return how much texture data has been consumed.
  */
-static int dxt4_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static int dxt4_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
     int x, y;
 
@@ -332,7 +332,7 @@ static int dxt4_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
  * @param block  block to decompress.
  * @return how much texture data has been consumed.
  */
-static int dxt5_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static int dxt5_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
     dxt5_block_internal(dst, stride, block);
 
@@ -372,7 +372,7 @@ static av_always_inline void ycocg2rgba(uint8_t *src, int scaled)
  * @param block  block to decompress.
  * @return how much texture data has been consumed.
  */
-static int dxt5y_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static int dxt5y_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
     int x, y;
 
@@ -396,7 +396,7 @@ static int dxt5y_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
  * @param block  block to decompress.
  * @return how much texture data has been consumed.
  */
-static int dxt5ys_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static int dxt5ys_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
     int x, y;
 
@@ -490,7 +490,7 @@ static inline void rgtc1_block_internal(uint8_t *dst, ptrdiff_t stride,
  * @param block  block to decompress.
  * @return how much texture data has been consumed.
  */
-static int rgtc1s_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static int rgtc1s_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
     rgtc1_block_internal(dst, stride, block, 1, 0, 0, 4);
 
@@ -506,7 +506,7 @@ static int rgtc1s_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
  * @param block  block to decompress.
  * @return how much texture data has been consumed.
  */
-static int rgtc1u_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static int rgtc1u_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
     rgtc1_block_internal(dst, stride, block, 0, 0, 0, 4);
 
@@ -522,7 +522,7 @@ static int rgtc1u_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
  * @param block  block to decompress.
  * @return how much texture data has been consumed.
  */
-static int rgtc1u_alpha_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static int rgtc1u_alpha_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
     rgtc1_block_internal(dst, stride, block, 0, 1, 3, 4);
 
@@ -538,7 +538,7 @@ static int rgtc1u_alpha_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *blo
  * @param block  block to decompress.
  * @return how much texture data has been consumed.
  */
-static int rgtc1u_gray_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static int rgtc1u_gray_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
     rgtc1_block_internal(dst, stride, block, 0, 1, 0, 1);
 
@@ -586,7 +586,7 @@ static inline void rgtc2_block_internal(uint8_t *dst, ptrdiff_t stride,
  * @param block  block to decompress.
  * @return how much texture data has been consumed.
  */
-static int rgtc2s_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static int rgtc2s_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
     rgtc2_block_internal(dst, stride, block, 1);
 
@@ -602,7 +602,7 @@ static int rgtc2s_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
  * @param block  block to decompress.
  * @return how much texture data has been consumed.
  */
-static int rgtc2u_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static int rgtc2u_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
     rgtc2_block_internal(dst, stride, block, 0);
 
@@ -618,7 +618,7 @@ static int rgtc2u_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
  * @param block  block to decompress.
  * @return how much texture data has been consumed.
  */
-static int dxn3dc_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
+static int dxn3dc_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
 {
     int x, y;
     rgtc2_block_internal(dst, stride, block, 0);
@@ -631,6 +631,46 @@ static int dxn3dc_block(uint8_t *dst, ptrdiff_t stride, const uint8_t *block)
         }
     }
 
+    return 16;
+}
+
+#include "bc7enc/bcenc_compat.h"
+static void deblockinize_pixels(const uint32_t *srcPixels, ptrdiff_t stride, uint32_t *dstPixels){
+    uint32_t *pixels = dstPixels;
+    pixels[0] = srcPixels[0];
+    pixels[1] = srcPixels[1];
+    pixels[2] = srcPixels[2];
+    pixels[3] = srcPixels[3];
+    pixels = (uint32_t*)((uint8_t*)pixels + stride);
+    pixels[0] = srcPixels[4];
+    pixels[1] = srcPixels[5];
+    pixels[2] = srcPixels[6];
+    pixels[3] = srcPixels[7];
+    pixels = (uint32_t*)((uint8_t*)pixels + stride);
+    pixels[0] = srcPixels[8];
+    pixels[1] = srcPixels[9];
+    pixels[2] = srcPixels[10];
+    pixels[3] = srcPixels[11];
+    pixels = (uint32_t*)((uint8_t*)pixels + stride);
+    pixels[0] = srcPixels[12];
+    pixels[1] = srcPixels[13];
+    pixels[2] = srcPixels[14];
+    pixels[3] = srcPixels[15];
+}
+/**
+ * Decompress one block of a BC7 texture and store the resulting
+ * RGBA pixels in 'dst'.
+ *
+ * @param dst    output buffer.
+ * @param stride scanline in bytes.
+ * @param block  block to decompress.
+ * @return how much texture data has been consumed.
+ */
+static int bc7_block_decode(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data)
+{
+    uint32_t colors[16];
+    bc7_decode(colors, block);
+    deblockinize_pixels(colors, stride, (uint32_t*)dst);
     return 16;
 }
 
@@ -651,8 +691,9 @@ av_cold void ff_texturedsp_init(TextureDSPContext *c)
     c->rgtc2s_block       = rgtc2s_block;
     c->rgtc2u_block       = rgtc2u_block;
     c->dxn3dc_block       = dxn3dc_block;
+    c->bc7_block          = bc7_block_decode;
 }
 
 #define TEXTUREDSP_FUNC_NAME ff_texturedsp_decompress_thread
-#define TEXTUREDSP_TEX_FUNC(a, b, c) tex_funct(a, b, c)
+#define TEXTUREDSP_TEX_FUNC(a, b, c, d) tex_funct(a, b, c, d)
 #include "texturedsp_template.c"
