@@ -3484,7 +3484,7 @@ namespace rgbcx
 		
 	void encode_bc1(void* pDst, const uint8_t* pPixels, uint32_t flags, uint32_t total_orderings_to_try, uint32_t total_orderings_to_try3)
 	{
-		assert(g_initialized);
+		assert(init_mode >= 0);
 				
 		const color32* pSrc_pixels = (const color32*)pPixels;
 		bc1_block* pDst_block = static_cast<bc1_block*>(pDst);
@@ -3888,7 +3888,7 @@ namespace rgbcx
 
 	void encode_bc4(void* pDst, const uint8_t* pPixels, uint32_t stride)
 	{
-		assert(g_initialized);
+		assert(init_mode >= 0);
 
 		uint32_t min0_v, max0_v, min1_v, max1_v, min2_v, max2_v, min3_v, max3_v;
 
@@ -4010,7 +4010,7 @@ namespace rgbcx
 
 	void encode_bc3(void* pDst, const uint8_t* pPixels, uint32_t flags, uint32_t total_orderings_to_try)
 	{
-		assert(g_initialized);
+		assert(init_mode >= 0);
 
 		// 3-color blocks are not allowed with BC3 (on most GPU's).
 		flags &= ~(cEncodeBC1Use3ColorBlocksForBlackPixels | cEncodeBC1Use3ColorBlocks);
@@ -4021,7 +4021,7 @@ namespace rgbcx
 
 	void encode_bc3(uint32_t level, void* pDst, const uint8_t* pPixels)
 	{
-		assert(g_initialized);
+		assert(init_mode >= 0);
 
 		encode_bc4(pDst, pPixels + 3, 4);
 		encode_bc1(level, static_cast<uint8_t*>(pDst) + 8, pPixels, false, false);
@@ -4029,7 +4029,7 @@ namespace rgbcx
 
 	void encode_bc5(void* pDst, const uint8_t* pPixels, uint32_t chan0, uint32_t chan1, uint32_t stride)
 	{
-		assert(g_initialized);
+		assert(init_mode >= 0);
 
 		encode_bc4(pDst, pPixels + chan0, stride);
 		encode_bc4(static_cast<uint8_t*>(pDst) + 8, pPixels + chan1, stride);
