@@ -79,7 +79,7 @@ typedef struct TextureDSPThreadContext {
     void* user_data;
 
     /* Pointer to the selected compress or decompress function. */
-    int (*tex_funct)(uint8_t *dst, ptrdiff_t stride, const uint8_t *block);
+    int (*tex_funct)(uint8_t *dst, ptrdiff_t stride, const uint8_t *block, void *user_data);
 } TextureDSPThreadContext;
 
 void ff_texturedsp_init(TextureDSPContext *c);
