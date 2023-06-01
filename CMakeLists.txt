@@ -26,4 +26,9 @@ file(GLOB AVPOSTPROC CONFIGURE_DEPENDS "libpostproc/*.c")
 file(GLOB SWSCALE CONFIGURE_DEPENDS "libswscale/*.c")
 file(GLOB SWRESAMPLE CONFIGURE_DEPENDS "libswresample/*.c")
 
-add_executable(ffmpeg_tools ${SOURCES} ${AVCODEC} ${AVDEVICE} ${AVFORMAT} ${AVFILTER} ${AVUTIL} ${AVPOSTPROC} ${SWSCALE} ${SWRESAMPLE} libavcodec/bc7enc/bcenc_compat.cpp)
+add_executable(ffmpeg_tools ${SOURCES} ${AVCODEC} ${AVDEVICE} ${AVFORMAT} ${AVFILTER} ${AVUTIL} ${AVPOSTPROC} ${SWSCALE} ${SWRESAMPLE}
+        libavcodec/bc7enc/bcenc_compat.cpp
+        libavcodec/bc7enc/bc7decomp.cpp
+        libavcodec/bc7enc/bc7enc.c
+        libavcodec/bc7enc/rgbcx.h
+        )
