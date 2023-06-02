@@ -6,6 +6,7 @@ Check ffmpeg help command to get descriptions for the new options.
 It's also planned to implement LZ4 compression instead of snappy.
 
 ## Build
+### If you don't want to bother with setting this stuff up, just use [ff-build.7z](https://github.com/Meetem/FFmpeg-better-hap/blob/better-hap/ff-build-mod.7z)
 It should be possible to build this repo with slighly modified https://github.com/m-ab-s/media-autobuild_suite/ 
 1. Change the ffmpegPath to https://github.com/Meetem/FFmpeg-better-hap.git#branch=better-hap
 2. Highly recommended to set ffmpegUpdate to 3 (only update ffmpeg)
@@ -17,7 +18,6 @@ It should be possible to build this repo with slighly modified https://github.co
     
     Basic idea here is to fix clone behaviour to force cloning into ffmpeg-git folder instead of reponame-git folder.
 4. Compile as usual.
-# If you don't want to bother with setting this stuff up, just use [ff-build.7z](https://github.com/Meetem/FFmpeg-better-hap/blob/better-hap/ff-build-mod.7z)
 
 FFmpeg README
 =============
