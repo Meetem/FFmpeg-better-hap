@@ -1,3 +1,10 @@
+This fork README
+=============
+
+This is modified version of ffmpeg which allows to decode/encode hap with the BC7 GPU format support. BC7 compressor is bc7enc https://github.com/richgel999/bc7enc 
+Check ffmpeg help command to get descriptions for the new options.
+Also it's planned to implement LZ4 compression instead of snappy.
+
 FFmpeg README
 =============
 
