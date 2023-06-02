@@ -3,7 +3,21 @@ This fork README
 
 This is modified version of ffmpeg which allows to decode/encode hap with the BC7 GPU format support. BC7 compressor is bc7enc https://github.com/richgel999/bc7enc 
 Check ffmpeg help command to get descriptions for the new options.
-Also it's planned to implement LZ4 compression instead of snappy.
+It's also planned to implement LZ4 compression instead of snappy.
+
+## Build
+It should be possible to build this repo with slighly modified https://github.com/m-ab-s/media-autobuild_suite/ 
+1. Change the ffmpegPath to https://github.com/Meetem/FFmpeg-better-hap.git#branch=better-hap
+2. Highly recommended to set ffmpegUpdate to 3 (only update ffmpeg)
+3. Apply those changes to media-suite_compile.sh:
+    Line 1556:             do_vcs "$ffmpegPath" ffmpeg
+    Line 2114:     if do_vcs "$ffmpegPath" ffmpeg; then
+    Line 2306:         ! git clone "$ffmpegPath" ffmpeg; then
+    Line 2589:         if flavor=cyan do_vcs "$ffmpegPath" ffmpeg; then
+    
+    Basic idea here is to fix clone behaviour to force cloning into ffmpeg-git folder instead of reponame-git folder.
+4. Compile as usual.
+# If you don't want to bother with setting this stuff up, just use [ff-build.7z](https://github.com/Meetem/FFmpeg-better-hap/blob/better-hap/ff-build-mod.7z)
 
 FFmpeg README
 =============
