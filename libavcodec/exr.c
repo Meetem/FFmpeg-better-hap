@@ -334,7 +334,10 @@ static int huf_unpack_enc_table(GetByteContext *gb,
         return ret;
 
     for (; im <= iM; im++) {
-        uint64_t l = freq[im] = get_bits(&gbit, 6);
+        int l;
+        if (get_bits_left(&gbit) < 6)
+            return AVERROR_INVALIDDATA;
+        l = freq[im] = get_bits(&gbit, 6);
 
         if (l == LONG_ZEROCODE_RUN) {
             int zerun = get_bits(&gbit, 8) + SHORTEST_LONG_RUN;
@@ -404,8 +407,8 @@ static int huf_build_dec_table(const EXRContext *s,
     td->he[j].code = td->freq[iM] >> 6;
     j++;
 
-    ff_free_vlc(&td->vlc);
-    return ff_init_vlc_sparse(&td->vlc, 12, j,
+    ff_vlc_free(&td->vlc);
+    return ff_vlc_init_sparse(&td->vlc, 12, j,
                               &td->he[0].len, sizeof(td->he[0]), sizeof(td->he[0].len),
                               &td->he[0].code, sizeof(td->he[0]), sizeof(td->he[0].code),
                               &td->he[0].sym, sizeof(td->he[0]), sizeof(td->he[0].sym), 0);
@@ -760,8 +763,8 @@ static int pxr24_uncompress(const EXRContext *s, const uint8_t *src,
 
 static void unpack_14(const uint8_t b[14], uint16_t s[16])
 {
-    unsigned short shift = (b[ 2] >> 2) & 15;
-    unsigned short bias = (0x20 << shift);
+    uint16_t shift = (b[ 2] >> 2) & 15;
+    uint16_t bias = (0x20 << shift);
     int i;
 
     s[ 0] = (b[0] << 8) | b[1];
@@ -1119,7 +1122,6 @@ static int dwa_uncompress(const EXRContext *s, const uint8_t *src, int compresse
             }
 
             {
-                const float scale = s->pixel_type == EXR_FLOAT ? 2.f : 1.f;
                 const int o = s->nb_channels == 4;
                 float *bo = ((float *)td->uncompressed_data) +
                     y * td->xsize * s->nb_channels + td->xsize * (o + 0) + x;
@@ -1137,9 +1139,9 @@ static int dwa_uncompress(const EXRContext *s, const uint8_t *src, int compresse
 
                         convert(yb[idx], ub[idx], vb[idx], &bo[xx], &go[xx], &ro[xx]);
 
-                        bo[xx] = to_linear(bo[xx], scale);
-                        go[xx] = to_linear(go[xx], scale);
-                        ro[xx] = to_linear(ro[xx], scale);
+                        bo[xx] = to_linear(bo[xx], 1.f);
+                        go[xx] = to_linear(go[xx], 1.f);
+                        ro[xx] = to_linear(ro[xx], 1.f);
                     }
 
                     bo += td->xsize * s->nb_channels;
@@ -1871,7 +1873,7 @@ static int decode_header(EXRContext *s, AVFrame *frame)
             continue;
         } else if ((var_size = check_header_variable(s, "tiles",
                                                      "tiledesc", 22)) >= 0) {
-            char tileLevel;
+            uint8_t tileLevel;
 
             if (!s->is_tile)
                 av_log(s->avctx, AV_LOG_WARNING,
@@ -1940,7 +1942,7 @@ static int decode_header(EXRContext *s, AVFrame *frame)
                                                      "preview", 16)) >= 0) {
             uint32_t pw = bytestream2_get_le32(gb);
             uint32_t ph = bytestream2_get_le32(gb);
-            uint64_t psize = pw * ph;
+            uint64_t psize = pw * (uint64_t)ph;
             if (psize > INT64_MAX / 4) {
                 ret = AVERROR_INVALIDDATA;
                 goto fail;
@@ -2089,6 +2091,8 @@ static int decode_frame(AVCodecContext *avctx, AVFrame *picture,
 
     if (s->apply_trc_type != AVCOL_TRC_UNSPECIFIED)
         avctx->color_trc = s->apply_trc_type;
+    else if (s->gamma > 0.9999f && s->gamma < 1.0001f)
+        avctx->color_trc = AVCOL_TRC_LINEAR;
 
     switch (s->compression) {
     case EXR_RAW:
@@ -2283,7 +2287,7 @@ static av_cold int decode_end(AVCodecContext *avctx)
         av_freep(&td->dc_data);
         av_freep(&td->rle_data);
         av_freep(&td->rle_raw_data);
-        ff_free_vlc(&td->vlc);
+        ff_vlc_free(&td->vlc);
     }
 
     av_freep(&s->thread_data);

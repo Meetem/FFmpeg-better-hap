@@ -45,12 +45,14 @@
  */
 
 #include <inttypes.h>
+#include <time.h>
 
 #include "libavutil/aes.h"
 #include "libavutil/avstring.h"
 #include "libavutil/mastering_display_metadata.h"
 #include "libavutil/mathematics.h"
 #include "libavcodec/bytestream.h"
+#include "libavcodec/defs.h"
 #include "libavcodec/internal.h"
 #include "libavutil/channel_layout.h"
 #include "libavutil/dict_internal.h"
@@ -100,7 +102,6 @@ typedef struct MXFPartition {
     uint64_t previous_partition;
     int index_sid;
     int body_sid;
-    int64_t this_partition;
     int64_t essence_offset;         ///< absolute offset of essence
     int64_t essence_length;
     int32_t kag_size;
@@ -247,7 +248,7 @@ typedef struct MXFFFV1SubDescriptor {
 
 typedef struct MXFIndexTableSegment {
     MXFMetadataSet meta;
-    int edit_unit_byte_count;
+    unsigned edit_unit_byte_count;
     int index_sid;
     int body_sid;
     AVRational index_edit_rate;
@@ -265,7 +266,6 @@ typedef struct MXFPackage {
     UID package_ul;
     UID *tracks_refs;
     int tracks_count;
-    MXFDescriptor *descriptor; /* only one */
     UID descriptor_ref;
     char *name;
     UID *comment_refs;
@@ -457,12 +457,15 @@ static int mxf_read_sync(AVIOContext *pb, const uint8_t *key, unsigned size)
     return i == size;
 }
 
-static int klv_read_packet(KLVPacket *klv, AVIOContext *pb)
+static int klv_read_packet(MXFContext *mxf, KLVPacket *klv, AVIOContext *pb)
 {
     int64_t length, pos;
     if (!mxf_read_sync(pb, mxf_klv_key, 4))
         return AVERROR_INVALIDDATA;
     klv->offset = avio_tell(pb) - 4;
+    if (klv->offset < mxf->run_in)
+        return AVERROR_INVALIDDATA;
+
     memcpy(klv->key, mxf_klv_key, 4);
     avio_read(pb, klv->key + 4, 12);
     length = klv_decode_ber_length(pb);
@@ -725,9 +728,12 @@ static int mxf_read_partition_pack(void *arg, AVIOContext *pb, int tag, int size
     UID op;
     uint64_t footer_partition;
     uint32_t nb_essence_containers;
+    uint64_t this_partition;
 
     if (mxf->partitions_count >= INT_MAX / 2)
         return AVERROR_INVALIDDATA;
+
+    av_assert0(klv_offset >= mxf->run_in);
 
     tmp_part = av_realloc_array(mxf->partitions, mxf->partitions_count + 1, sizeof(*mxf->partitions));
     if (!tmp_part)
@@ -771,7 +777,13 @@ static int mxf_read_partition_pack(void *arg, AVIOContext *pb, int tag, int size
     partition->complete = uid[14] > 2;
     avio_skip(pb, 4);
     partition->kag_size = avio_rb32(pb);
-    partition->this_partition = avio_rb64(pb);
+    this_partition = avio_rb64(pb);
+    if (this_partition != klv_offset - mxf->run_in) {
+        av_log(mxf->fc, AV_LOG_ERROR,
+               "this_partition %"PRId64" mismatches %"PRId64"\n",
+               this_partition, klv_offset - mxf->run_in);
+        return AVERROR_INVALIDDATA;
+    }
     partition->previous_partition = avio_rb64(pb);
     footer_partition = avio_rb64(pb);
     partition->header_byte_count = avio_rb64(pb);
@@ -779,6 +791,9 @@ static int mxf_read_partition_pack(void *arg, AVIOContext *pb, int tag, int size
     partition->index_sid = avio_rb32(pb);
     partition->body_offset = avio_rb64(pb);
     partition->body_sid = avio_rb32(pb);
+    if (partition->body_offset < 0)
+        return AVERROR_INVALIDDATA;
+
     if (avio_read(pb, op, sizeof(UID)) != sizeof(UID)) {
         av_log(mxf->fc, AV_LOG_ERROR, "Failed reading UID\n");
         return AVERROR_INVALIDDATA;
@@ -791,8 +806,8 @@ static int mxf_read_partition_pack(void *arg, AVIOContext *pb, int tag, int size
         av_dict_set(&s->metadata, "operational_pattern_ul", str, 0);
     }
 
-    if (partition->this_partition &&
-        partition->previous_partition == partition->this_partition) {
+    if (this_partition &&
+        partition->previous_partition == this_partition) {
         av_log(mxf->fc, AV_LOG_ERROR,
                "PreviousPartition equal to ThisPartition %"PRIx64"\n",
                partition->previous_partition);
@@ -800,11 +815,11 @@ static int mxf_read_partition_pack(void *arg, AVIOContext *pb, int tag, int size
         if (!mxf->parsing_backward && mxf->last_forward_partition > 1) {
             MXFPartition *prev =
                 mxf->partitions + mxf->last_forward_partition - 2;
-            partition->previous_partition = prev->this_partition;
+            partition->previous_partition = prev->pack_ofs - mxf->run_in;
         }
         /* if no previous body partition are found point to the header
          * partition */
-        if (partition->previous_partition == partition->this_partition)
+        if (partition->previous_partition == this_partition)
             partition->previous_partition = 0;
         av_log(mxf->fc, AV_LOG_ERROR,
                "Overriding PreviousPartition with %"PRIx64"\n",
@@ -826,7 +841,7 @@ static int mxf_read_partition_pack(void *arg, AVIOContext *pb, int tag, int size
             "PartitionPack: ThisPartition = 0x%"PRIX64
             ", PreviousPartition = 0x%"PRIX64", "
             "FooterPartition = 0x%"PRIX64", IndexSID = %i, BodySID = %i\n",
-            partition->this_partition,
+            this_partition,
             partition->previous_partition, footer_partition,
             partition->index_sid, partition->body_sid);
 
@@ -900,7 +915,7 @@ static uint64_t partition_score(MXFPartition *p)
         score = 3;
     else
         score = 1;
-    return (score << 60) | ((uint64_t)p->this_partition >> 4);
+    return (score << 60) | ((uint64_t)p->pack_ofs >> 4);
 }
 
 static int mxf_add_metadata_set(MXFContext *mxf, MXFMetadataSet **metadata_set)
@@ -1254,6 +1269,9 @@ static int mxf_read_index_table_segment(void *arg, AVIOContext *pb, int tag, int
     case 0x3F0B:
         segment->index_edit_rate.num = avio_rb32(pb);
         segment->index_edit_rate.den = avio_rb32(pb);
+        if (segment->index_edit_rate.num <= 0 ||
+            segment->index_edit_rate.den <= 0)
+            return AVERROR_INVALIDDATA;
         av_log(NULL, AV_LOG_TRACE, "IndexEditRate %d/%d\n", segment->index_edit_rate.num,
                 segment->index_edit_rate.den);
         break;
@@ -1402,8 +1420,8 @@ static int mxf_read_generic_descriptor(void *arg, AVIOContext *pb, int tag, int 
         }
         if (IS_KLV_KEY(uid, mxf_jp2k_rsiz)) {
             uint32_t rsiz = avio_rb16(pb);
-            if (rsiz == FF_PROFILE_JPEG2000_DCINEMA_2K ||
-                rsiz == FF_PROFILE_JPEG2000_DCINEMA_4K)
+            if (rsiz == AV_PROFILE_JPEG2000_DCINEMA_2K ||
+                rsiz == AV_PROFILE_JPEG2000_DCINEMA_4K)
                 descriptor->pix_fmt = AV_PIX_FMT_XYZ12;
         }
         if (IS_KLV_KEY(uid, mxf_mastering_display_prefix)) {
@@ -1542,11 +1560,11 @@ static int mxf_read_tagged_value(void *arg, AVIOContext *pb, int tag, int size, 
  * Match an uid independently of the version byte and up to len common bytes
  * Returns: boolean
  */
-static int mxf_match_uid(const UID key, const UID uid, int len)
+static int mxf_match_uid(const UID key, const uint8_t uid_prefix[], int len)
 {
     int i;
     for (i = 0; i < len; i++) {
-        if (i != 7 && key[i] != uid[i])
+        if (i != 7 && key[i] != uid_prefix[i])
             return 0;
     }
     return 1;
@@ -1570,7 +1588,7 @@ static void *mxf_resolve_strong_ref(MXFContext *mxf, UID *strong_ref, enum MXFMe
         return NULL;
     for (i = mxf->metadata_sets_count - 1; i >= 0; i--) {
         if (!memcmp(*strong_ref, mxf->metadata_sets[i]->uid, 16) &&
-            (type == AnyType || mxf->metadata_sets[i]->type == type)) {
+            (mxf->metadata_sets[i]->type == type)) {
             return mxf->metadata_sets[i];
         }
     }
@@ -1888,9 +1906,13 @@ static int mxf_edit_unit_absolute_offset(MXFContext *mxf, MXFIndexTable *index_t
         if (edit_unit < s->index_start_position + s->index_duration) {
             int64_t index = edit_unit - s->index_start_position;
 
-            if (s->edit_unit_byte_count)
+            if (s->edit_unit_byte_count) {
+                if (index > INT64_MAX / s->edit_unit_byte_count ||
+                    s->edit_unit_byte_count * index > INT64_MAX - offset_temp)
+                    return AVERROR_INVALIDDATA;
+
                 offset_temp += s->edit_unit_byte_count * index;
-            else {
+            } else {
                 if (s->nb_index_entries == 2 * s->index_duration + 1)
                     index *= 2;     /* Avid index */
 
@@ -2209,22 +2231,17 @@ static int mxf_add_timecode_metadata(AVDictionary **pm, const char *key, AVTimec
 
 static MXFTimecodeComponent* mxf_resolve_timecode_component(MXFContext *mxf, UID *strong_ref)
 {
-    MXFStructuralComponent *component = NULL;
-    MXFPulldownComponent *pulldown = NULL;
+    MXFTimecodeComponent *timecode;
+    MXFPulldownComponent *pulldown;
 
-    component = mxf_resolve_strong_ref(mxf, strong_ref, AnyType);
-    if (!component)
-        return NULL;
+    timecode = mxf_resolve_strong_ref(mxf, strong_ref, TimecodeComponent);
+    if (timecode)
+        return timecode;
 
-    switch (component->meta.type) {
-    case TimecodeComponent:
-        return (MXFTimecodeComponent*)component;
-    case PulldownComponent: /* timcode component may be located on a pulldown component */
-        pulldown = (MXFPulldownComponent*)component;
+    pulldown = mxf_resolve_strong_ref(mxf, strong_ref, PulldownComponent);
+    if (pulldown)
         return mxf_resolve_strong_ref(mxf, &pulldown->input_segment_ref, TimecodeComponent);
-    default:
-        break;
-    }
+
     return NULL;
 }
 
@@ -2244,17 +2261,16 @@ static MXFPackage* mxf_resolve_source_package(MXFContext *mxf, UID package_ul, U
     return NULL;
 }
 
-static MXFDescriptor* mxf_resolve_multidescriptor(MXFContext *mxf, MXFDescriptor *descriptor, int track_id)
+static MXFDescriptor* mxf_resolve_descriptor(MXFContext *mxf, UID *strong_ref, int track_id)
 {
-    MXFDescriptor *file_descriptor = NULL;
-    int i;
+    MXFDescriptor *descriptor = mxf_resolve_strong_ref(mxf, strong_ref, Descriptor);
+    if (descriptor)
+        return descriptor;
 
-    if (!descriptor)
-        return NULL;
-
-    if (descriptor->meta.type == MultipleDescriptor) {
-        for (i = 0; i < descriptor->file_descriptors_count; i++) {
-            file_descriptor = mxf_resolve_strong_ref(mxf, &descriptor->file_descriptors_refs[i], Descriptor);
+    descriptor = mxf_resolve_strong_ref(mxf, strong_ref, MultipleDescriptor);
+    if (descriptor) {
+        for (int i = 0; i < descriptor->file_descriptors_count; i++) {
+            MXFDescriptor *file_descriptor = mxf_resolve_strong_ref(mxf, &descriptor->file_descriptors_refs[i], Descriptor);
 
             if (!file_descriptor) {
                 av_log(mxf->fc, AV_LOG_ERROR, "could not resolve file descriptor strong ref\n");
@@ -2264,20 +2280,25 @@ static MXFDescriptor* mxf_resolve_multidescriptor(MXFContext *mxf, MXFDescriptor
                 return file_descriptor;
             }
         }
-    } else if (descriptor->meta.type == Descriptor)
-        return descriptor;
+    }
 
     return NULL;
 }
 
-static MXFStructuralComponent* mxf_resolve_essence_group_choice(MXFContext *mxf, MXFEssenceGroup *essence_group)
+static MXFStructuralComponent* mxf_resolve_sourceclip(MXFContext *mxf, UID *strong_ref)
 {
     MXFStructuralComponent *component = NULL;
     MXFPackage *package = NULL;
     MXFDescriptor *descriptor = NULL;
+    MXFEssenceGroup *essence_group;
     int i;
 
-    if (!essence_group || !essence_group->structural_components_count)
+    component = mxf_resolve_strong_ref(mxf, strong_ref, SourceClip);
+    if (component)
+        return component;
+
+    essence_group = mxf_resolve_strong_ref(mxf, strong_ref, EssenceGroup);
+    if (!essence_group)
         return NULL;
 
     /* essence groups contains multiple representations of the same media,
@@ -2294,24 +2315,7 @@ static MXFStructuralComponent* mxf_resolve_essence_group_choice(MXFContext *mxf,
         if (descriptor)
             return component;
     }
-    return NULL;
-}
 
-static MXFStructuralComponent* mxf_resolve_sourceclip(MXFContext *mxf, UID *strong_ref)
-{
-    MXFStructuralComponent *component = NULL;
-
-    component = mxf_resolve_strong_ref(mxf, strong_ref, AnyType);
-    if (!component)
-        return NULL;
-    switch (component->meta.type) {
-        case SourceClip:
-            return component;
-        case EssenceGroup:
-            return mxf_resolve_essence_group_choice(mxf, (MXFEssenceGroup*) component);
-        default:
-            break;
-    }
     return NULL;
 }
 
@@ -2577,10 +2581,13 @@ static int parse_mca_labels(MXFContext *mxf, MXFTrack *source_track, MXFDescript
 
     if (service_type != AV_AUDIO_SERVICE_TYPE_NB && service_type != AV_AUDIO_SERVICE_TYPE_MAIN && !ambigous_service_type) {
         enum AVAudioServiceType *ast;
-        uint8_t* side_data = av_stream_new_side_data(st, AV_PKT_DATA_AUDIO_SERVICE_TYPE, sizeof(*ast));
+        AVPacketSideData *side_data = av_packet_side_data_new(&st->codecpar->coded_side_data,
+                                                              &st->codecpar->nb_coded_side_data,
+                                                              AV_PKT_DATA_AUDIO_SERVICE_TYPE,
+                                                              sizeof(*ast), 0);
         if (!side_data)
             return AVERROR(ENOMEM);
-        ast = (enum AVAudioServiceType*)side_data;
+        ast = (enum AVAudioServiceType*)side_data->data;
         *ast = service_type;
     }
 
@@ -2766,8 +2773,7 @@ static int mxf_parse_structural_metadata(MXFContext *mxf)
         st->id = material_track->track_id;
         st->priv_data = source_track;
 
-        source_package->descriptor = mxf_resolve_strong_ref(mxf, &source_package->descriptor_ref, AnyType);
-        descriptor = mxf_resolve_multidescriptor(mxf, source_package->descriptor, source_track->track_id);
+        descriptor = mxf_resolve_descriptor(mxf, &source_package->descriptor_ref, source_track->track_id);
 
         /* A SourceClip from a EssenceGroup may only be a single frame of essence data. The clips duration is then how many
          * frames its suppose to repeat for. Descriptor->duration, if present, contains the real duration of the essence data */
@@ -2980,19 +2986,21 @@ static int mxf_parse_structural_metadata(MXFContext *mxf)
             st->codecpar->color_trc       = mxf_get_codec_ul(ff_mxf_color_trc_uls, &descriptor->color_trc_ul)->id;
             st->codecpar->color_space     = mxf_get_codec_ul(ff_mxf_color_space_uls, &descriptor->color_space_ul)->id;
             if (descriptor->mastering) {
-                ret = av_stream_add_side_data(st, AV_PKT_DATA_MASTERING_DISPLAY_METADATA,
-                                              (uint8_t *)descriptor->mastering,
-                                              sizeof(*descriptor->mastering));
-                if (ret < 0)
+                if (!av_packet_side_data_add(&st->codecpar->coded_side_data, &st->codecpar->nb_coded_side_data,
+                                             AV_PKT_DATA_MASTERING_DISPLAY_METADATA,
+                                             (uint8_t *)descriptor->mastering, sizeof(*descriptor->mastering), 0)) {
+                    ret = AVERROR(ENOMEM);
                     goto fail_and_free;
+                }
                 descriptor->mastering = NULL;
             }
             if (descriptor->coll) {
-                ret = av_stream_add_side_data(st, AV_PKT_DATA_CONTENT_LIGHT_LEVEL,
-                                              (uint8_t *)descriptor->coll,
-                                              descriptor->coll_size);
-                if (ret < 0)
+                if (!av_packet_side_data_add(&st->codecpar->coded_side_data, &st->codecpar->nb_coded_side_data,
+                                             AV_PKT_DATA_CONTENT_LIGHT_LEVEL,
+                                             (uint8_t *)descriptor->coll, descriptor->coll_size, 0)) {
+                    ret = AVERROR(ENOMEM);
                     goto fail_and_free;
+                }
                 descriptor->coll = NULL;
             }
         } else if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
@@ -3229,7 +3237,7 @@ static const MXFMetadataReadTableEntry mxf_metadata_read_table[] = {
     { { 0x06,0x0e,0x2b,0x34,0x02,0x05,0x01,0x01,0x0d,0x01,0x02,0x01,0x01,0x04,0x04,0x00 }, mxf_read_partition_pack },
     { { 0x06,0x0e,0x2b,0x34,0x02,0x53,0x01,0x01,0x0d,0x01,0x01,0x01,0x01,0x01,0x2f,0x00 }, mxf_read_preface_metadata },
     { { 0x06,0x0e,0x2b,0x34,0x02,0x53,0x01,0x01,0x0d,0x01,0x01,0x01,0x01,0x01,0x30,0x00 }, mxf_read_identification_metadata },
-    { { 0x06,0x0e,0x2b,0x34,0x02,0x53,0x01,0x01,0x0d,0x01,0x01,0x01,0x01,0x01,0x18,0x00 }, mxf_read_content_storage, 0, AnyType },
+    { { 0x06,0x0e,0x2b,0x34,0x02,0x53,0x01,0x01,0x0d,0x01,0x01,0x01,0x01,0x01,0x18,0x00 }, mxf_read_content_storage },
     { { 0x06,0x0e,0x2b,0x34,0x02,0x53,0x01,0x01,0x0d,0x01,0x01,0x01,0x01,0x01,0x37,0x00 }, mxf_read_package, sizeof(MXFPackage), SourcePackage },
     { { 0x06,0x0e,0x2b,0x34,0x02,0x53,0x01,0x01,0x0d,0x01,0x01,0x01,0x01,0x01,0x36,0x00 }, mxf_read_package, sizeof(MXFPackage), MaterialPackage },
     { { 0x06,0x0e,0x2b,0x34,0x02,0x53,0x01,0x01,0x0d,0x01,0x01,0x01,0x01,0x01,0x0f,0x00 }, mxf_read_sequence, sizeof(MXFSequence), Sequence },
@@ -3258,7 +3266,7 @@ static const MXFMetadataReadTableEntry mxf_metadata_read_table[] = {
     { { 0x06,0x0e,0x2b,0x34,0x02,0x53,0x01,0x01,0x0d,0x01,0x04,0x01,0x02,0x02,0x00,0x00 }, mxf_read_cryptographic_context, sizeof(MXFCryptoContext), CryptoContext },
     { { 0x06,0x0e,0x2b,0x34,0x02,0x53,0x01,0x01,0x0d,0x01,0x02,0x01,0x01,0x10,0x01,0x00 }, mxf_read_index_table_segment, sizeof(MXFIndexTableSegment), IndexTableSegment },
     { { 0x06,0x0e,0x2b,0x34,0x02,0x53,0x01,0x01,0x0d,0x01,0x01,0x01,0x01,0x01,0x23,0x00 }, mxf_read_essence_container_data, sizeof(MXFEssenceContainerData), EssenceContainerData },
-    { { 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00 }, NULL, 0, AnyType },
+    { { 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00 }, NULL },
 };
 
 static int mxf_metadataset_init(MXFMetadataSet *ctx, enum MXFMetadataSetType type, MXFPartition *partition)
@@ -3420,7 +3428,7 @@ static int mxf_seek_to_previous_partition(MXFContext *mxf)
     /* Make sure this is actually a PartitionPack, and if so parse it.
      * See deadlock2.mxf
      */
-    if ((ret = klv_read_packet(&klv, pb)) < 0) {
+    if ((ret = klv_read_packet(mxf, &klv, pb)) < 0) {
         av_log(mxf->fc, AV_LOG_ERROR, "failed to read PartitionPack KLV\n");
         return ret;
     }
@@ -3537,14 +3545,14 @@ static void mxf_compute_essence_containers(AVFormatContext *s)
 
             /* essence container spans to the next partition */
             if (x < mxf->partitions_count - 1)
-                p->essence_length = mxf->partitions[x+1].this_partition - p->essence_offset;
+                p->essence_length = mxf->partitions[x+1].pack_ofs - mxf->run_in - p->essence_offset;
 
             if (p->essence_length < 0) {
                 /* next ThisPartition < essence_offset */
                 p->essence_length = 0;
                 av_log(mxf->fc, AV_LOG_ERROR,
                        "partition %i: bad ThisPartition = %"PRIX64"\n",
-                       x+1, mxf->partitions[x+1].this_partition);
+                       x+1, mxf->partitions[x+1].pack_ofs - mxf->run_in);
             }
         }
     }
@@ -3697,7 +3705,7 @@ static void mxf_read_random_index_pack(AVFormatContext *s)
     if (length < min_rip_length || length > max_rip_length)
         goto end;
     avio_seek(s->pb, file_size - length, SEEK_SET);
-    if (klv_read_packet(&klv, s->pb) < 0 ||
+    if (klv_read_packet(mxf, &klv, s->pb) < 0 ||
         !IS_KLV_KEY(klv.key, ff_mxf_random_index_pack_key))
         goto end;
     if (klv.next_klv != file_size || klv.length <= 4 || (klv.length - 4) % 12) {
@@ -3744,7 +3752,7 @@ static int mxf_read_header(AVFormatContext *s)
     while (!avio_feof(s->pb)) {
         const MXFMetadataReadTableEntry *metadata;
 
-        ret = klv_read_packet(&klv, s->pb);
+        ret = klv_read_packet(mxf, &klv, s->pb);
         if (ret < 0 || IS_KLV_KEY(klv.key, ff_mxf_random_index_pack_key)) {
             if (ret >= 0 && avio_size(s->pb) > klv.next_klv)
                 av_log(s, AV_LOG_WARNING, "data after the RandomIndexPack, assuming end of file\n");
@@ -3996,7 +4004,7 @@ static int mxf_read_packet(AVFormatContext *s, AVPacket *pkt)
 
         if (pos < mxf->current_klv_data.next_klv - mxf->current_klv_data.length || pos >= mxf->current_klv_data.next_klv) {
             mxf->current_klv_data = (KLVPacket){{0}};
-            ret = klv_read_packet(&klv, s->pb);
+            ret = klv_read_packet(mxf, &klv, s->pb);
             if (ret < 0)
                 break;
             max_data_size = klv.length;

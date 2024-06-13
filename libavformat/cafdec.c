@@ -52,9 +52,15 @@ typedef struct CafContext {
 
 static int probe(const AVProbeData *p)
 {
-    if (AV_RB32(p->buf) == MKBETAG('c','a','f','f') && AV_RB16(&p->buf[4]) == 1)
-        return AVPROBE_SCORE_MAX;
-    return 0;
+    if (AV_RB32(p->buf) != MKBETAG('c','a','f','f'))
+        return 0;
+    if (AV_RB16(&p->buf[4]) != 1)
+        return 0;
+    if (AV_RB32(p->buf + 8) != MKBETAG('d','e','s','c'))
+        return 0;
+    if (AV_RB64(p->buf + 12) != 32)
+        return 0;
+    return AVPROBE_SCORE_MAX;
 }
 
 /** Read audio description chunk */
@@ -265,7 +271,7 @@ static int read_pakt_chunk(AVFormatContext *s, int64_t size)
         }
     }
 
-    if (avio_tell(pb) - ccount > size) {
+    if (avio_tell(pb) - ccount > size || size > INT64_MAX - ccount) {
         av_log(s, AV_LOG_ERROR, "error reading packet table\n");
         return AVERROR_INVALIDDATA;
     }
@@ -337,6 +343,9 @@ static int read_header(AVFormatContext *s)
             avio_skip(pb, 4); /* edit count */
             caf->data_start = avio_tell(pb);
             caf->data_size  = size < 0 ? -1 : size - 4;
+            if (caf->data_start < 0 || caf->data_size > INT64_MAX - caf->data_start)
+                return AVERROR_INVALIDDATA;
+
             if (caf->data_size > 0 && (pb->seekable & AVIO_SEEKABLE_NORMAL))
                 avio_skip(pb, caf->data_size);
             found_data = 1;

@@ -28,6 +28,7 @@
 #include "internal.h"
 #include "framesync.h"
 #include "blend.h"
+#include "video.h"
 
 #define IN_TOP    0
 #define IN_BOTTOM 1
@@ -249,7 +250,8 @@ static int blend_frame(FFFrameSync *fs)
         if (top_fc->sw_format != bottom_fc->sw_format) {
             av_log(avctx, AV_LOG_ERROR,
                    "Currently the sw format of the bottom video need to match the top!\n");
-            return AVERROR(EINVAL);
+            err = AVERROR(EINVAL);
+            goto fail;
         }
         RET(init_filter(avctx));
     }

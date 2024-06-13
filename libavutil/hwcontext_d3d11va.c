@@ -62,7 +62,9 @@ static av_cold void load_functions(void)
         return;
 
     mD3D11CreateDevice = (PFN_D3D11_CREATE_DEVICE) GetProcAddress(d3dlib, "D3D11CreateDevice");
-    mCreateDXGIFactory = (PFN_CREATE_DXGI_FACTORY) GetProcAddress(dxgilib, "CreateDXGIFactory");
+    mCreateDXGIFactory = (PFN_CREATE_DXGI_FACTORY) GetProcAddress(dxgilib, "CreateDXGIFactory1");
+    if (!mCreateDXGIFactory)
+        mCreateDXGIFactory = (PFN_CREATE_DXGI_FACTORY) GetProcAddress(dxgilib, "CreateDXGIFactory");
 #else
     // In UWP (which lacks LoadLibrary), CreateDXGIFactory isn't available,
     // only CreateDXGIFactory1
@@ -452,8 +454,8 @@ static int d3d11va_transfer_data(AVHWFramesContext *ctx, AVFrame *dst,
 
         fill_texture_ptrs(map_data, map_linesize, ctx, &desc, &map);
 
-        av_image_copy(dst->data, dst->linesize, (const uint8_t **)map_data, map_linesize,
-                      ctx->sw_format, w, h);
+        av_image_copy2(dst->data, dst->linesize, map_data, map_linesize,
+                       ctx->sw_format, w, h);
 
         ID3D11DeviceContext_Unmap(device_hwctx->device_context, staging, 0);
     } else {
@@ -464,8 +466,8 @@ static int d3d11va_transfer_data(AVHWFramesContext *ctx, AVFrame *dst,
 
         fill_texture_ptrs(map_data, map_linesize, ctx, &desc, &map);
 
-        av_image_copy(map_data, map_linesize, (const uint8_t **)src->data, src->linesize,
-                      ctx->sw_format, w, h);
+        av_image_copy2(map_data, map_linesize, src->data, src->linesize,
+                       ctx->sw_format, w, h);
 
         ID3D11DeviceContext_Unmap(device_hwctx->device_context, staging, 0);
 

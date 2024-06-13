@@ -440,6 +440,8 @@ static int config_output(AVFilterLink *outlink)
 
     showwaves->history_nb_samples = av_rescale(showwaves->w * nb_channels * 2,
                                                showwaves->n.num, showwaves->n.den);
+    if (showwaves->history_nb_samples <= 0)
+        return AVERROR(EINVAL);
     showwaves->history = av_calloc(showwaves->history_nb_samples,
                                    sizeof(*showwaves->history));
     if (!showwaves->history)
@@ -794,13 +796,6 @@ static int activate(AVFilterContext *ctx)
     return FFERROR_NOT_READY;
 }
 
-static const AVFilterPad showwaves_inputs[] = {
-    {
-        .name         = "default",
-        .type         = AVMEDIA_TYPE_AUDIO,
-    },
-};
-
 static const AVFilterPad showwaves_outputs[] = {
     {
         .name          = "default",
@@ -815,7 +810,7 @@ const AVFilter ff_avf_showwaves = {
     .init          = init,
     .uninit        = uninit,
     .priv_size     = sizeof(ShowWavesContext),
-    FILTER_INPUTS(showwaves_inputs),
+    FILTER_INPUTS(ff_audio_default_filterpad),
     .activate      = activate,
     FILTER_OUTPUTS(showwaves_outputs),
     FILTER_QUERY_FUNC(query_formats),

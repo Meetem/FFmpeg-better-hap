@@ -238,6 +238,16 @@ static int get_siz(Jpeg2000DecoderContext *s)
         return AVERROR_INVALIDDATA;
     }
 
+    if (s->image_offset_x >= s->width || s->image_offset_y >= s->height) {
+        av_log(s->avctx, AV_LOG_ERROR, "image offsets outside image");
+        return AVERROR_INVALIDDATA;
+    }
+
+    if (s->reduction_factor && (s->image_offset_x || s->image_offset_y) ){
+        av_log(s->avctx, AV_LOG_ERROR, "reduction factor with image offsets is not fully implemented");
+        return AVERROR_PATCHWELCOME;
+    }
+
     s->ncomponents = ncomponents;
 
     if (s->tile_width <= 0 || s->tile_height <= 0) {
@@ -303,12 +313,12 @@ static int get_siz(Jpeg2000DecoderContext *s)
         dimy = FFMAX(dimy, ff_jpeg2000_ceildiv(o_dimy, s->cdy[i]));
     }
 
-    ret = ff_set_dimensions(s->avctx, dimx, dimy);
+    ret = ff_set_dimensions(s->avctx, dimx << s->avctx->lowres, dimy << s->avctx->lowres);
     if (ret < 0)
         return ret;
 
-    if (s->avctx->profile == FF_PROFILE_JPEG2000_DCINEMA_2K ||
-        s->avctx->profile == FF_PROFILE_JPEG2000_DCINEMA_4K) {
+    if (s->avctx->profile == AV_PROFILE_JPEG2000_DCINEMA_2K ||
+        s->avctx->profile == AV_PROFILE_JPEG2000_DCINEMA_4K) {
         possible_fmts = xyz_pix_fmts;
         possible_fmts_nb = FF_ARRAY_ELEMS(xyz_pix_fmts);
     } else {
@@ -823,9 +833,6 @@ static int get_tlm(Jpeg2000DecoderContext *s, int n)
             break;
         case 2:
             bytestream2_get_be16(&s->g);
-            break;
-        case 3:
-            bytestream2_get_be32(&s->g);
             break;
         }
         if (SP == 0) {
@@ -1877,7 +1884,7 @@ static inline void roi_scale_cblk(Jpeg2000Cblk *cblk,
     }
 }
 
-static inline void tile_codeblocks(const Jpeg2000DecoderContext *s, Jpeg2000Tile *tile)
+static inline int tile_codeblocks(const Jpeg2000DecoderContext *s, Jpeg2000Tile *tile)
 {
     Jpeg2000T1Context t1;
 
@@ -1902,12 +1909,19 @@ static inline void tile_codeblocks(const Jpeg2000DecoderContext *s, Jpeg2000Tile
                 int nb_precincts, precno;
                 Jpeg2000Band *band = rlevel->band + bandno;
                 int cblkno = 0, bandpos;
+                /* See Rec. ITU-T T.800, Equation E-2 */
+                int magp = quantsty->expn[subbandno] + quantsty->nguardbits - 1;
 
                 bandpos = bandno + (reslevelno > 0);
 
                 if (band->coord[0][0] == band->coord[0][1] ||
                     band->coord[1][0] == band->coord[1][1])
                     continue;
+
+                if ((codsty->cblk_style & JPEG2000_CTSY_HTJ2K_F) && magp >= 31) {
+                    avpriv_request_sample(s->avctx, "JPEG2000_CTSY_HTJ2K_F and magp >= 31");
+                    return AVERROR_PATCHWELCOME;
+                }
 
                 nb_precincts = rlevel->num_precincts_x * rlevel->num_precincts_y;
                 /* Loop on precincts */
@@ -1919,8 +1933,6 @@ static inline void tile_codeblocks(const Jpeg2000DecoderContext *s, Jpeg2000Tile
                          cblkno < prec->nb_codeblocks_width * prec->nb_codeblocks_height;
                          cblkno++) {
                         int x, y, ret;
-                        /* See Rec. ITU-T T.800, Equation E-2 */
-                        int magp = quantsty->expn[subbandno] + quantsty->nguardbits - 1;
 
                         Jpeg2000Cblk *cblk = prec->cblk + cblkno;
 
@@ -1960,6 +1972,7 @@ static inline void tile_codeblocks(const Jpeg2000DecoderContext *s, Jpeg2000Tile
             ff_dwt_decode(&comp->dwt, codsty->transform == FF_DWT97 ? (void*)comp->f_data : (void*)comp->i_data);
 
     } /*end comp */
+    return 0;
 }
 
 #define WRITE_FRAME(D, PIXEL)                                                                     \
@@ -2036,7 +2049,9 @@ static int jpeg2000_decode_tile(AVCodecContext *avctx, void *td,
     AVFrame *picture = td;
     Jpeg2000Tile *tile = s->tile + jobnr;
 
-    tile_codeblocks(s, tile);
+    int ret = tile_codeblocks(s, tile);
+    if (ret < 0)
+        return ret;
 
     /* inverse MCT transformation */
     if (tile->codsty[0].mct)
@@ -2420,6 +2435,14 @@ static int jp2_find_codestream(Jpeg2000DecoderContext *s)
 static av_cold int jpeg2000_decode_init(AVCodecContext *avctx)
 {
     Jpeg2000DecoderContext *s = avctx->priv_data;
+
+    if (avctx->lowres)
+        av_log(avctx, AV_LOG_WARNING, "lowres is overriden by reduction_factor but set anyway\n");
+    if (!s->reduction_factor && avctx->lowres < JPEG2000_MAX_RESLEVELS) {
+        s->reduction_factor = avctx->lowres;
+    }
+    if (avctx->lowres != s->reduction_factor && avctx->lowres)
+        return AVERROR(EINVAL);
 
     ff_jpeg2000dsp_init(&s->dsp);
     ff_jpeg2000_init_tier1_luts();

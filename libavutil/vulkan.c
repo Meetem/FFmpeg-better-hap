@@ -90,9 +90,13 @@ int ff_vk_load_props(FFVulkanContext *s)
     s->hprops = (VkPhysicalDeviceExternalMemoryHostPropertiesEXT) {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT,
     };
+    s->coop_matrix_props = (VkPhysicalDeviceCooperativeMatrixPropertiesKHR) {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_PROPERTIES_KHR,
+        .pNext = &s->hprops,
+    };
     s->subgroup_props = (VkPhysicalDeviceSubgroupSizeControlProperties) {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_PROPERTIES,
-        .pNext = &s->hprops,
+        .pNext = &s->coop_matrix_props,
     };
     s->desc_buf_props = (VkPhysicalDeviceDescriptorBufferPropertiesEXT) {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT,
@@ -160,6 +164,25 @@ int ff_vk_load_props(FFVulkanContext *s)
     }
 
     vk->GetPhysicalDeviceQueueFamilyProperties2(s->hwctx->phys_dev, &s->tot_nb_qfs, s->qf_props);
+
+    if (s->extensions & FF_VK_EXT_COOP_MATRIX) {
+        vk->GetPhysicalDeviceCooperativeMatrixPropertiesKHR(s->hwctx->phys_dev,
+                                                            &s->coop_mat_props_nb, NULL);
+
+        if (s->coop_mat_props_nb) {
+            s->coop_mat_props = av_malloc_array(s->coop_mat_props_nb,
+                                                sizeof(VkCooperativeMatrixPropertiesKHR));
+            for (int i = 0; i < s->coop_mat_props_nb; i++) {
+                s->coop_mat_props[i] = (VkCooperativeMatrixPropertiesKHR) {
+                    .sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR,
+                };
+            }
+
+            vk->GetPhysicalDeviceCooperativeMatrixPropertiesKHR(s->hwctx->phys_dev,
+                                                                &s->coop_mat_props_nb,
+                                                                s->coop_mat_props);
+        }
+    }
 
     return 0;
 }
@@ -241,6 +264,7 @@ void ff_vk_exec_pool_free(FFVulkanContext *s, FFVkExecPool *pool)
             vk->WaitForFences(s->hwctx->act_dev, 1, &e->fence, VK_TRUE, UINT64_MAX);
             vk->DestroyFence(s->hwctx->act_dev, e->fence, s->hwctx->alloc);
         }
+        pthread_mutex_destroy(&e->lock);
 
         ff_vk_exec_discard_deps(s, e);
 
@@ -280,8 +304,6 @@ int ff_vk_exec_pool_init(FFVulkanContext *s, FFVkQueueFamilyCtx *qf,
 
     VkCommandPoolCreateInfo cqueue_create;
     VkCommandBufferAllocateInfo cbuf_create;
-
-    atomic_init(&pool->idx, 0);
 
     /* Create command pool */
     cqueue_create = (VkCommandPoolCreateInfo) {
@@ -379,12 +401,17 @@ int ff_vk_exec_pool_init(FFVulkanContext *s, FFVkQueueFamilyCtx *qf,
     /* Init contexts */
     for (int i = 0; i < pool->pool_size; i++) {
         FFVkExecContext *e = &pool->contexts[i];
-
-        /* Fence */
         VkFenceCreateInfo fence_create = {
             .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
             .flags = VK_FENCE_CREATE_SIGNALED_BIT,
         };
+
+        /* Mutex */
+        err = pthread_mutex_init(&e->lock, NULL);
+        if (err != 0)
+            return AVERROR(err);
+
+        /* Fence */
         ret = vk->CreateFence(s->hwctx->act_dev, &fence_create, s->hwctx->alloc,
                               &e->fence);
         if (ret != VK_SUCCESS) {
@@ -429,6 +456,9 @@ VkResult ff_vk_exec_get_query(FFVulkanContext *s, FFVkExecContext *e,
     int64_t res = 0;
     VkQueryResultFlags qf = 0;
 
+    if (!e->had_submission)
+        return VK_NOT_READY;
+
     qf |= pool->query_64bit ?
           VK_QUERY_RESULT_64_BIT : 0x0;
     qf |= pool->query_statuses ?
@@ -466,7 +496,7 @@ VkResult ff_vk_exec_get_query(FFVulkanContext *s, FFVkExecContext *e,
 
 FFVkExecContext *ff_vk_exec_get(FFVkExecPool *pool)
 {
-    int idx = atomic_fetch_add_explicit(&pool->idx, 1, memory_order_relaxed);
+    uint32_t idx = pool->idx++;
     idx %= pool->pool_size;
     return &pool->contexts[idx];
 }
@@ -474,7 +504,10 @@ FFVkExecContext *ff_vk_exec_get(FFVkExecPool *pool)
 void ff_vk_exec_wait(FFVulkanContext *s, FFVkExecContext *e)
 {
     FFVulkanFunctions *vk = &s->vkfn;
+    pthread_mutex_lock(&e->lock);
     vk->WaitForFences(s->hwctx->act_dev, 1, &e->fence, VK_TRUE, UINT64_MAX);
+    ff_vk_exec_discard_deps(s, e);
+    pthread_mutex_unlock(&e->lock);
 }
 
 int ff_vk_exec_start(FFVulkanContext *s, FFVkExecContext *e)
@@ -488,9 +521,13 @@ int ff_vk_exec_start(FFVulkanContext *s, FFVkExecContext *e)
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
 
-    /* Create the fence and don't wait for it initially */
+    /* Wait for the fence to be signalled */
     vk->WaitForFences(s->hwctx->act_dev, 1, &e->fence, VK_TRUE, UINT64_MAX);
+
+    /* vkResetFences is defined as being host-synchronized */
+    pthread_mutex_lock(&e->lock);
     vk->ResetFences(s->hwctx->act_dev, 1, &e->fence);
+    pthread_mutex_unlock(&e->lock);
 
     /* Discard queue dependencies */
     ff_vk_exec_discard_deps(s, e);
@@ -744,6 +781,8 @@ int ff_vk_exec_submit(FFVulkanContext *s, FFVkExecContext *e)
             e->frame_locked[j] = 0;
         }
     }
+
+    e->had_submission = 1;
 
     return 0;
 }
@@ -1850,6 +1889,7 @@ void ff_vk_pipeline_free(FFVulkanContext *s, FFVulkanPipeline *pl)
 
     av_freep(&pl->desc_set);
     av_freep(&pl->desc_bind);
+    av_freep(&pl->bound_buffer_indices);
     av_freep(&pl->push_consts);
     pl->push_consts_num = 0;
 }
@@ -1859,6 +1899,7 @@ void ff_vk_uninit(FFVulkanContext *s)
     av_freep(&s->query_props);
     av_freep(&s->qf_props);
     av_freep(&s->video_props);
+    av_freep(&s->coop_mat_props);
 
     av_buffer_unref(&s->frames_ref);
 }

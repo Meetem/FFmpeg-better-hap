@@ -23,8 +23,8 @@
 #include "vulkan.h"
 
 #include <vk_video/vulkan_video_codecs_common.h>
-#include "vulkan_video_codec_av1std.h"
-#include "vulkan_video_codec_av1std_decode.h"
+#include "vulkan_video_codec_av1std_mesa.h"
+#include "vulkan_video_codec_av1std_decode_mesa.h"
 
 #define CODEC_VER_MAJ(ver) (ver >> 22)
 #define CODEC_VER_MIN(ver) ((ver >> 12) & ((1 << 10) - 1))
@@ -70,6 +70,13 @@ VkVideoChromaSubsamplingFlagBitsKHR ff_vk_subsampling_from_av_desc(const AVPixFm
  * Get Vulkan's bit depth from an [8:12] integer.
  */
 VkVideoComponentBitDepthFlagBitsKHR ff_vk_depth_from_av_depth(int depth);
+
+
+/**
+ * Convert level from Vulkan to AV.
+ */
+int ff_vk_h264_level_to_av(StdVideoH264LevelIdc level);
+int ff_vk_h265_level_to_av(StdVideoH265LevelIdc level);
 
 typedef struct FFVkVideoBuffer {
     FFVkBuffer buf;

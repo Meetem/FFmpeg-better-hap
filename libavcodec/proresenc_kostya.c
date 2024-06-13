@@ -3,9 +3,6 @@
  *
  * Copyright (c) 2012 Konstantin Shishkov
  *
- * This encoder appears to be based on Anatoliy Wassermans considering
- * similarities in the bugs.
- *
  * This file is part of FFmpeg.
  *
  * FFmpeg is free software; you can redistribute it and/or
@@ -1355,6 +1352,7 @@ static av_cold int encode_init(AVCodecContext *avctx)
     }
 
     avctx->codec_tag   = ctx->profile_info->tag;
+    avctx->profile = ctx->profile;
 
     av_log(avctx, AV_LOG_DEBUG,
            "profile %d, %d slices, interlacing: %s, %d bits per MB\n",
